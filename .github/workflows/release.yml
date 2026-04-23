@@ -3,20 +3,16 @@ on:
   workflow_dispatch:
     inputs:
       setupCommand:
-        description: 'Command to setup libraries (Standard: haxelib install hmm && haxelib run hmm install)'
+        description: 'Setup Command'
         required: true
         default: 'haxelib install hmm && haxelib run hmm install'
       doCache:
-        description: 'Enable build caching? (true/false)'
+        description: 'Enable Cache'
         required: true
         default: 'true'
 
 permissions:
   contents: write
-  discussions: write
-
-env:
-  PROJECT_NAME: PsychExtendedOnline
 
 jobs:
   build:
@@ -25,55 +21,56 @@ jobs:
       matrix:
         include:
           - name: Android
-            os: macos-15
-            buildArgs: "android -final -D officialBuild"
+            os: ubuntu-latest
+            buildArgs: "android -final"
             artifactName: androidBuild
             artifactPath: "export/release/android/bin/app/build/outputs/apk/release/*.apk"
-          - name: iOS
-            os: macos-15
-            buildArgs: "ios -final -nosign -D officialBuild"
-            artifactName: iOSBuild
-            artifactPath: "export/release/ios/build/Release-iphoneos/*.ipa"
 
-    uses: ./.github/workflows/build.yml
-    with:
-      name: ${{ matrix.name }}
-      os: ${{ matrix.os }}
-      buildArgs: ${{ matrix.buildArgs }}
-      artifactName: ${{ matrix.artifactName }}
-      artifactPath: ${{ matrix.artifactPath }}
-      setupCommand: ${{ github.event.inputs.setupCommand }}
-      doCache: ${{ github.event.inputs.doCache == 'true' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v1.5.1
+        with:
+          haxe-version: 4.3.6
+
+      - name: Install Libraries
+        run: |
+          haxelib install lime
+          haxelib install openfl
+          haxelib install flixel
+          ${{ github.event.inputs.setupCommand }}
+
+      - name: Configure Android
+        if: matrix.name == 'Android'
+        run: |
+          haxelib run lime setup android
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+
+      - name: Build Game
+        run: haxelib run lime build ${{ matrix.buildArgs }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactPath }}
 
   Releaser:
     needs: [build]
     runs-on: ubuntu-latest
-    permissions: write-all
     steps:
-      - name: Download Android Build
-        uses: actions/download-artifact@main
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
         with:
           name: androidBuild
-          path: /home/runner
+          path: ./output
 
-      - name: Move Android File
-        run: mv /home/runner/*.apk /home/runner/${{ env.PROJECT_NAME }}-Android.apk || true
-
-      - name: Download iOS Build
-        uses: actions/download-artifact@main
-        with:
-          name: iOSBuild
-          path: /home/runner
-
-      - name: Move iOS File
-        run: mv /home/runner/*.ipa /home/runner/${{ env.PROJECT_NAME }}-iOS.ipa || true
-
-      - name: Publish The Release
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Latest Build"
+          name: "Mobile Port"
           tag_name: "latest"
-          prerelease: false
-          files: |
-            /home/runner/*.apk
-            /home/runner/*.ipa
+          files: ./output/*.apk
