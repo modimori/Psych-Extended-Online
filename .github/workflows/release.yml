@@ -3,74 +3,71 @@ on:
   workflow_dispatch:
     inputs:
       setupCommand:
-        description: 'Setup Command'
+        description: 'Command to setup libraries'
         required: true
         default: 'haxelib install hmm && haxelib run hmm install'
-      doCache:
-        description: 'Enable Cache'
-        required: true
-        default: 'true'
 
 permissions:
   contents: write
 
-jobs:
-  build:
-    name: ${{ matrix.name }}
-    strategy:
-      matrix:
-        include:
-          - name: Android
-            os: ubuntu-latest
-            buildArgs: "android -final"
-            artifactName: androidBuild
-            artifactPath: "export/release/android/bin/app/build/outputs/apk/release/*.apk"
+env:
+  PROJECT_NAME: PsychExtendedOnline
 
-    runs-on: ${{ matrix.os }}
+jobs:
+  build-android:
+    name: Android Build
+    runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@main
 
       - name: Setup Haxe
-        uses: krdlab/setup-haxe@v1.5.1
+        uses: krdlab/setup-haxe@master
         with:
-          haxe-version: 4.3.6
+          haxe-version: 4.3.4
 
       - name: Install Libraries
         run: |
           haxelib install lime
           haxelib install openfl
           haxelib install flixel
+          haxelib install flixel-addons
+          haxelib install flixel-ui
+          haxelib install hscript
+          haxelib install hxCodec
           ${{ github.event.inputs.setupCommand }}
 
-      - name: Configure Android
-        if: matrix.name == 'Android'
+      - name: Configure Android Paths
         run: |
-          haxelib run lime setup android
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          haxelib run lime setup -alias -y
+          haxelib run lime setup android "${ANDROID_HOME}" "${ANDROID_NDK_LATEST_HOME}" "${JAVA_HOME_17_X64}"
+        # This tells Lime exactly where the GitHub runner keeps the Android tools
 
       - name: Build Game
-        run: haxelib run lime build ${{ matrix.buildArgs }}
+        run: haxelib run lime build android -final -D officialBuild
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifactName }}
-          path: ${{ matrix.artifactPath }}
-
-  Releaser:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/upload-artifact@main
         with:
           name: androidBuild
-          path: ./output
+          path: export/release/android/bin/app/build/outputs/apk/release/*.apk
+
+  Releaser:
+    needs: [build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Build
+        uses: actions/download-artifact@main
+        with:
+          name: androidBuild
+          path: /home/runner
+
+      - name: Move and Rename
+        run: mv /home/runner/*.apk /home/runner/${{ env.PROJECT_NAME }}-Android.apk || true
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Mobile Port"
+          name: "Mobile Build"
           tag_name: "latest"
-          files: ./output/*.apk
+          files: /home/runner/*.apk
